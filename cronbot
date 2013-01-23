@@ -1,0 +1,182 @@
+#!/usr/bin/env perl
+
+use warnings;
+use strict;
+use Getopt::Long;
+use POSIX;
+use Pod::Usage;
+use Sys::Syslog qw(:standard :macros);
+
+
+my $TMP = ".";
+
+my $rand;
+my $allowduplicate = 0;
+my $timer          = 0;
+my $man            = 0;
+my $nonice;
+my $nicecmd        = '/usr/bin/nice' if (-f '/usr/bin/nice');
+
+GetOptions ('rand:i'      => \$rand,
+            'duplicate|d' => \$allowduplicate,
+            'timer|t:i'   => \$timer,
+            'nonice'      => \$nonice,
+            'man'         => \$man,
+            
+           );
+
+if ($man)          { pod2usage( {-verbose => 2 } ); }
+if ($#ARGV == -1 ) { pod2usage( {-verbose => 1 } ); }
+
+openlog($ARGV[1], 'nofatal', 'LOG_CRON');
+
+createPidFile();
+
+
+if (defined($rand) and $rand == 0) { $rand = 30; }
+if (defined($rand))
+{
+    my $rsleep = ceil(rand($rand)) * 60;
+    #sleep($rsleep);
+}
+
+if (defined($nonice))
+{
+    undef $nicecmd;
+}
+
+# Only run a single instance of whatever this is by default
+if (not $allowduplicate)
+{
+    opendir ( DIR, $TMP ) || die "Error in opening temp dir $TMP\n";
+    while( my $filename = readdir(DIR) )
+    {
+        next if $filename !~ /^cronbot\./;
+        next if $filename eq "cronbot.$$";
+        
+        
+        open my $fp, '<', $filename or die "Unable to open pid file $filename";
+        my @l = <$fp>;
+        my $args = "@ARGV";
+        chomp $l[0];
+        if ($l[0] eq $args)
+        {
+            # File indicates a duplicate process running.. but is it really?
+            my ($junk, $testpid) = split /\./, $filename;
+            my $test = `ps -Af |grep $testpid | grep -v grep`;
+            if (not $test)
+            {
+                # Nope... clean up that old file and continue.
+                unlink $filename;
+                syslog('LOG_WARNING', "Removed old PID file for non-running process");
+            } else {
+
+                #print STDERR "WARN: Duplicate process running\n";
+                exit 0;
+            }
+        }
+    }
+    closedir(DIR);
+}
+
+
+if ( $timer >= 1 )
+{
+    $timer = $timer * 60;
+    eval
+    {
+        local $SIG{ALRM} = sub { die "alarm\n" }; # NB: \n required
+
+        alarm $timer;
+        unshift (@ARGV, $nicecmd) if ( $nicecmd);
+        my $ret = system(@ARGV);
+        #print STDERR "Exit: $ret\n";
+        exit $ret;
+        alarm 0;
+    };
+    
+    if ($@)
+    {
+        die unless $@ eq "alarm\n"; # propagate unexpected errors
+        #die "Timed Out\n";
+    } else {
+
+        # didn't
+    }
+
+} else {
+
+    # No timer
+    unshift (@ARGV, $nicecmd) if ( $nicecmd);
+    my $ret = system( @ARGV);
+}
+
+
+
+END
+{
+    unlink "$TMP/cronbot.$$";
+    if ($timer >= 1)
+    {
+        syslog('LOG_ERR', "Process timed out and was terminated:  @ARGV");
+        kill 9, getpgrp() * -1;
+    }
+}
+
+
+sub createPidFile
+{
+    open my $fp, '>', "$TMP/cronbot.$$" or die "Unable to create pid file in $TMP";
+    print $fp "@ARGV\n";
+    close $fp;
+}
+
+__END__
+
+=head1 NAME
+
+cronbot - Gain more control over your cron jobs and how they run.
+
+=head1 SYNOPSIS
+
+cronbot <options> [full path to your regular cron job]
+
+   Options:
+     --rand xx		Add a max random number of minutes to wait before starting job. Default is 30 minutes
+      			if not otherwise specified. 
+     --dulicate		Allow this job to run more than once
+     --timer xx   	Specify a max execution time. Longer than this and it will be killed hard
+     --nonice 		Do not run the job through nice (man nice)
+     --man		Full man page
+
+=head1 USAGE
+
+15 * * * * root /usr/local/bin/cronbot --timer 90 --rand 10 /usr/local/bin/rsync -a /home /mnt/remote/home
+
+This would attempt to run rsync every hour but will not start a duplicate job if it's still running. It will hard kill the job if it's running for 
+more than 90 minutes and it will add a random delay between 1 and 10 minutes before starting the job. 
+
+=head1 DESCRIPTION
+
+Cronbot is a wrapper script for cron jobs.  Rather than running your job/script directly you run it through cronbot and it will allow a little more control
+to help keep things from getting out of hand.  The default behavior is to only allow one instance of your job to run.  This can be changed with the 
+--duplicate option. You can also pass in a maximum time of execution for a job or add a random amount time to delay the start of your job.
+Also by default jobs are run with a default 'nice' value which is usually 10 (man nice). 
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright 2013 Jared Watkins
+
+This is released under the GNU General Public License (GPL-2.0)
+
+=head1 AVAILABILITY
+
+Get it at:
+
+L<https://github.com/jimmydigital/cronbot>
+
+or
+
+L<http://jaredwatkins.com/>
+
+=cut
