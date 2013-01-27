@@ -8,7 +8,7 @@ use Pod::Usage;
 use Sys::Syslog qw(:standard :macros);
 
 
-my $TMP = ".";
+my $TMP = "/tmp";
 
 my $rand;
 my $allowduplicate = 0;
