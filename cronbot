@@ -5,7 +5,6 @@ use strict;
 use Getopt::Long;
 use POSIX;
 use Pod::Usage;
-use Sys::Syslog qw(:standard :macros);
 
 
 my $TMP = "/tmp";
@@ -15,22 +14,62 @@ my $allowduplicate = 0;
 my $timer          = 0;
 my $man            = 0;
 my $nonice;
+my $touchfile;
+my ($logfile, $LOG);
 my $nicecmd        = '/usr/bin/nice' if (-f '/usr/bin/nice');
 
-GetOptions ('rand:i'      => \$rand,
-            'duplicate|d' => \$allowduplicate,
-            'timer|t:i'   => \$timer,
-            'nonice'      => \$nonice,
-            'man'         => \$man,
+GetOptions ('rand:i'         => \$rand,
+            'duplicate|d'    => \$allowduplicate,
+            'timer|t:i'      => \$timer,
+            'nonice'         => \$nonice,
+            'touchfile|tf:s' => \$touchfile,
+            'logfile|lf:s'   => \$logfile,
+            'man'            => \$man,
             
            );
 
 if ($man)          { pod2usage( {-verbose => 2 } ); }
 if ($#ARGV == -1 ) { pod2usage( {-verbose => 1 } ); }
 
-openlog($ARGV[1], 'nofatal', 'LOG_CRON');
+
+# Using specified logfile rather than syslog
+if ($logfile)
+{
+    open $LOG, '>>', $logfile or die("Unable to open logfile $logfile for writing");
+
+} else {
+    use Sys::Syslog qw(:standard :macros);
+    openlog($ARGV[1], 'nofatal', 'LOG_CRON');
+}
+
+
+
+# If using touchfile.. make sure we can create it later
+if ($touchfile)
+{
+    # This seems silly.. but if we don't already have a touch file we have
+    # to make one to be sure we can make one later for reals. 
+    if (not -e $touchfile)
+    {
+        my $ret = system("/usr/bin/env touch $touchfile");
+        if ($ret)
+        {
+            mylog("ERROR: Unable to write to $touchfile");
+            exit 1;
+        } else { unlink $touchfile; }
+
+    } elsif (not -w $touchfile)
+    { 
+        mylog("ERROR: Unable to write to $touchfile");
+        exit 1;
+    }
+}
+
+
 
 createPidFile();
+
+mylog("Running: @ARGV");
 
 
 if (defined($rand) and $rand == 0) { $rand = 30; }
@@ -68,10 +107,10 @@ if (not $allowduplicate)
             {
                 # Nope... clean up that old file and continue.
                 unlink $filename;
-                syslog('LOG_WARNING', "Removed old PID file for non-running process");
+                mylog("WARNING: Removed old PID file for non-running process");
             } else {
 
-                #print STDERR "WARN: Duplicate process running\n";
+                mylog("WARNING: Duplicate process running");
                 exit 0;
             }
         }
@@ -90,7 +129,6 @@ if ( $timer >= 1 )
         alarm $timer;
         unshift (@ARGV, $nicecmd) if ( $nicecmd);
         my $ret = system(@ARGV);
-        #print STDERR "Exit: $ret\n";
         exit $ret;
         alarm 0;
     };
@@ -98,10 +136,11 @@ if ( $timer >= 1 )
     if ($@)
     {
         die unless $@ eq "alarm\n"; # propagate unexpected errors
-        #die "Timed Out\n";
     } else {
 
         # didn't
+        updateTouchfile();
+
     }
 
 } else {
@@ -109,6 +148,7 @@ if ( $timer >= 1 )
     # No timer
     unshift (@ARGV, $nicecmd) if ( $nicecmd);
     my $ret = system( @ARGV);
+    updateTouchfile();
 }
 
 
@@ -118,11 +158,44 @@ END
     unlink "$TMP/cronbot.$$";
     if ($timer >= 1)
     {
-        syslog('LOG_ERR', "Process timed out and was terminated:  @ARGV");
+        mylog("ERROR: Process timed out and was terminated:  @ARGV");
         kill 9, getpgrp() * -1;
     }
 }
 
+
+sub mylog
+{
+    my $now = `date -u "+%Y-%m-%d %H:%M:%S UTC"`;
+    chomp $now;
+
+    my ($output) = @_;
+    if ($logfile)
+    {
+        print $LOG "$now | $output\n";
+
+    } else {
+        my $level = 'LOG_INFO';
+        $level = 'LOG_ERR' if ($output =~ /^ERROR/);
+        $level = 'LOG_WARNING' if ($output =~ /^WARNING/);
+        syslog($level, "$now | $output");
+    }
+}
+
+
+sub updateTouchfile
+{
+    if ($touchfile)
+    {
+        my $ret = system("/usr/bin/env touch $touchfile");
+        
+        if ($ret)
+        {
+            mylog("ERROR: Unable to write to $touchfile");
+            exit 1;
+        }
+    }
+}
 
 sub createPidFile
 {
@@ -147,6 +220,8 @@ cronbot <options> [full path to your regular cron job]
      --dulicate		Allow this job to run more than once
      --timer xx   	Specify a max execution time. Longer than this and it will be killed hard
      --nonice 		Do not run the job through nice (man nice)
+     --touchfile        Update the modtime on this file after the job completes. Useful for freshness checking.
+     --logfile          File to log info and error messages (uses syslog by default)
      --man		Full man page
 
 =head1 USAGE
@@ -156,12 +231,22 @@ cronbot <options> [full path to your regular cron job]
 This would attempt to run rsync every hour but will not start a duplicate job if it's still running. It will hard kill the job if it's running for 
 more than 90 minutes and it will add a random delay between 1 and 10 minutes before starting the job. 
 
+
+
+15 * * * * root /usr/local/bin/cronbot --logfile /var/log/cronitem1.log --tf /var/fresh/cronitem1 /usr/local/bin/rsync -a /home /mnt/remote/home
+
+This example logs output to a file rather than syslog and updated the time stamp on /var/fresh/cronitem1 when the job finishes.  These can be useful
+for other automation to detect jobs that aren't running as expected. 
+
+
 =head1 DESCRIPTION
 
 Cronbot is a wrapper script for cron jobs.  Rather than running your job/script directly you run it through cronbot and it will allow a little more control
 to help keep things from getting out of hand.  The default behavior is to only allow one instance of your job to run.  This can be changed with the 
 --duplicate option. You can also pass in a maximum time of execution for a job or add a random amount time to delay the start of your job.
 Also by default jobs are run with a default 'nice' value which is usually 10 (man nice). 
+
+Requires Sys::Syslog for logging to syslog or specify a logfile with --logfile <file>
 
 =head1 COPYRIGHT AND LICENSE
 
