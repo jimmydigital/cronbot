@@ -178,7 +178,7 @@ sub mylog
         my $level = 'LOG_INFO';
         $level = 'LOG_ERR' if ($output =~ /^ERROR/);
         $level = 'LOG_WARNING' if ($output =~ /^WARNING/);
-        syslog($level, "$now | $output");
+        syslog($level, "$output");
     }
 }
 
