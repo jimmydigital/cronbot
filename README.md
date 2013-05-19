@@ -9,7 +9,7 @@ cronbot <options> \[full path to your regular cron job\]
     Options:
       --rand xx		Add a max random number of minutes to wait before starting job. Default is 30 minutes
        			if not otherwise specified. 
-      --dulicate		Allow this job to run more than once
+      --duplicate	Allow this job to run more than once
       --timer xx   	Specify a max execution time. Longer than this and it will be killed hard
       --nonice 		Do not run the job through nice (man nice)
       --touchfile        Update the modtime on this file after the job completes. Useful for freshness checking.
