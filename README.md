@@ -14,6 +14,7 @@ cronbot <options> \[full path to your regular cron job\]
       --nonice 		Do not run the job through nice (man nice)
       --touchfile        Update the modtime on this file after the job completes. Useful for freshness checking.
       --logfile          File to log info and error messages (uses syslog by default)
+      --loadlimit x.x    Max 1min load load. Over this value the script waits for the load to drop. Max delay about 2 hours.
       --man		Full man page
 
 # USAGE
@@ -38,7 +39,8 @@ for other automation to detect jobs that aren't running as expected.
 
 Cronbot is a wrapper script for cron jobs.  Rather than running your job/script directly you run it through cronbot and it will allow a little more control
 to help keep things from getting out of hand.  The default behavior is to only allow one instance of your job to run.  This can be changed with the 
-\--duplicate option. You can also pass in a maximum time of execution for a job or add a random amount time to delay the start of your job.
+\--duplicate option. You can also pass in a maximum time of execution for a job or add a random amount time to delay the start of your job. You can
+also specify a maximum load value.. if the systm is over this value it will wait with an exponential backoff and keep trying.. up to about 2 hours.
 Also by default jobs are run with a default 'nice' value which is usually 10 (man nice). 
 
 Requires Sys::Syslog for logging to syslog or specify a logfile with --logfile <file>
